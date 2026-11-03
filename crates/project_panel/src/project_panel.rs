@@ -6183,6 +6183,9 @@ impl ProjectPanel {
         h_flex()
             .flex_none()
             .pr_1()
+            // Keep presses on these buttons from reaching the row, which would
+            // otherwise start a drag or leave the row thinking it's still pressed.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .when(can_edit, |this| {
                 this.child(
                     IconButton::new("project-panel-new-file", IconName::FilePlus)
