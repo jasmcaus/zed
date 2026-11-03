@@ -920,7 +920,6 @@ pub(crate) fn render_buffer_header(
                                         then.child(render_breadcrumb_text(
                                             breadcrumbs,
                                             Some(font),
-                                            None,
                                             editor_handle,
                                             true,
                                             window,

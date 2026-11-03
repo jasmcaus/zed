@@ -7,15 +7,8 @@ use workspace::{
     item::{HighlightedText, ItemEvent, ItemHandle},
 };
 
-type RenderBreadcrumbTextFn = fn(
-    Vec<HighlightedText>,
-    Option<Font>,
-    Option<AnyElement>,
-    &dyn ItemHandle,
-    bool,
-    &mut Window,
-    &App,
-) -> AnyElement;
+type RenderBreadcrumbTextFn =
+    fn(Vec<HighlightedText>, Option<Font>, &dyn ItemHandle, bool, &mut Window, &App) -> AnyElement;
 
 pub struct RenderBreadcrumbText(pub RenderBreadcrumbTextFn);
 
@@ -62,13 +55,10 @@ impl Render for Breadcrumbs {
             return element.into_any_element();
         };
 
-        let prefix_element = active_item.breadcrumb_prefix(window, cx);
-
         if let Some(render_fn) = cx.try_global::<RenderBreadcrumbText>() {
             (render_fn.0)(
                 segments,
                 breadcrumb_font,
-                prefix_element,
                 active_item.as_ref(),
                 false,
                 window,
