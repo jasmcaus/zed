@@ -6178,11 +6178,15 @@ impl ProjectPanel {
 
     fn render_navigation_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
+        let navigation_icon_button = |id: &'static str, icon: IconName| {
+            IconButton::new(id, icon)
+                .icon_size(IconSize::Custom(rems_from_px(20_f32)))
+                .size(ButtonSize::Medium)
+        };
         let navigation_button =
             |id: &'static str, icon: IconName, tooltip: &'static str, action: Box<dyn Action>| {
                 let focus_handle = focus_handle.clone();
-                IconButton::new(id, icon)
-                    .icon_size(IconSize::Small)
+                navigation_icon_button(id, icon)
                     .tooltip({
                         let action = action.boxed_clone();
                         move |_window, cx| {
@@ -6197,13 +6201,12 @@ impl ProjectPanel {
         h_flex()
             .h(ui::Tab::container_height(cx))
             .flex_none()
-            .px_1p5()
+            .px_1()
             .gap_0p5()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
-                IconButton::new("project-panel-explorer", IconName::FileMultiple)
-                    .icon_size(IconSize::Small)
+                navigation_icon_button("project-panel-explorer", IconName::FileMultiple)
                     .toggle_state(self.active_view == ActiveView::Explorer)
                     .tooltip(Tooltip::text("Explorer"))
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -6211,8 +6214,7 @@ impl ProjectPanel {
                     })),
             )
             .child(
-                IconButton::new("project-panel-search", IconName::MagnifyingGlass)
-                    .icon_size(IconSize::Small)
+                navigation_icon_button("project-panel-search", IconName::MagnifyingGlass)
                     .toggle_state(self.active_view == ActiveView::Search)
                     .tooltip({
                         let focus_handle = focus_handle.clone();
