@@ -6382,6 +6382,9 @@ impl ProjectPanel {
             .flatten();
         let root_actions = (path.is_empty() && !show_editor)
             .then(|| self.render_root_actions(worktree_id, entry_id, cx));
+        // The blank area below the entries blocks hover for the whole panel, so
+        // also keep the root actions visible while the panel is focused.
+        let show_root_actions = root_actions.is_some() && self.contains_focus(window, cx);
 
         let id: ElementId = if is_sticky {
             SharedString::from(format!("project_panel_sticky_item_{}", entry_id.to_usize())).into()
@@ -6851,6 +6854,7 @@ impl ProjectPanel {
                         });
 
                         match root_actions {
+                            Some(root_actions) if show_root_actions => this.end_slot(root_actions),
                             Some(root_actions) => this.end_slot(
                                 h_flex()
                                     .relative()
