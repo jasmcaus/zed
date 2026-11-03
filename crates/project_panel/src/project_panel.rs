@@ -62,7 +62,7 @@ use std::{
 use svg_preview::svg_preview_view::SvgPreviewView;
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind, IndentGuideColors,
+    ButtonLike, ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind, IndentGuideColors,
     IndentGuideLayout, Indicator, KeyBinding, ListItem, ListItemSpacing, ProjectEmptyState,
     ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
 };
@@ -6178,15 +6178,28 @@ impl ProjectPanel {
 
     fn render_navigation_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
-        let navigation_icon_button = |id: &'static str, icon: IconName| {
-            IconButton::new(id, icon)
-                .icon_size(IconSize::Custom(rems_from_px(20_f32)))
-                .size(ButtonSize::Medium)
+        // `IconButton` pads custom icon sizes by the icon size itself, so a square
+        // button around a large icon has to be built from `ButtonLike`.
+        let navigation_icon_button = |id: &'static str, icon: IconName, selected: bool| {
+            let button_size = rems_from_px(40_f32);
+            ButtonLike::new(id)
+                .width(button_size)
+                .height(button_size.into())
+                .toggle_state(selected)
+                .child(
+                    Icon::new(icon)
+                        .size(IconSize::Custom(rems_from_px(24_f32)))
+                        .color(if selected {
+                            Color::Selected
+                        } else {
+                            Color::Default
+                        }),
+                )
         };
         let navigation_button =
             |id: &'static str, icon: IconName, tooltip: &'static str, action: Box<dyn Action>| {
                 let focus_handle = focus_handle.clone();
-                navigation_icon_button(id, icon)
+                navigation_icon_button(id, icon, false)
                     .tooltip({
                         let action = action.boxed_clone();
                         move |_window, cx| {
@@ -6199,32 +6212,38 @@ impl ProjectPanel {
             };
 
         h_flex()
-            .h(ui::Tab::container_height(cx))
+            .h(DynamicSpacing::Base48.px(cx))
             .flex_none()
-            .px_1()
-            .gap_0p5()
+            .justify_center()
+            .gap_2()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
-                navigation_icon_button("project-panel-explorer", IconName::FileMultiple)
-                    .toggle_state(self.active_view == ActiveView::Explorer)
-                    .tooltip(Tooltip::text("Explorer"))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_explorer(window, cx);
-                    })),
+                navigation_icon_button(
+                    "project-panel-explorer",
+                    IconName::FileMultiple,
+                    self.active_view == ActiveView::Explorer,
+                )
+                .tooltip(Tooltip::text("Explorer"))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.show_explorer(window, cx);
+                })),
             )
             .child(
-                navigation_icon_button("project-panel-search", IconName::MagnifyingGlass)
-                    .toggle_state(self.active_view == ActiveView::Search)
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |_window, cx| {
-                            Tooltip::for_action_in("Search", &FocusSearch, &focus_handle, cx)
-                        }
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_search(window, cx);
-                    })),
+                navigation_icon_button(
+                    "project-panel-search",
+                    IconName::MagnifyingGlass,
+                    self.active_view == ActiveView::Search,
+                )
+                .tooltip({
+                    let focus_handle = focus_handle.clone();
+                    move |_window, cx| {
+                        Tooltip::for_action_in("Search", &FocusSearch, &focus_handle, cx)
+                    }
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.show_search(window, cx);
+                })),
             )
             .child(navigation_button(
                 "project-panel-source-control",
