@@ -2053,8 +2053,8 @@ See [Tab Switcher](../tab-switcher.md).
 {
   "tabs": {
     "close_position": "right",
-    "file_icons": false,
-    "git_status": false,
+    "file_icons": true,
+    "git_status": true,
     "activate_on_close": "history",
     "show_close_button": "hover",
     "show_diagnostics": "off"
@@ -2094,13 +2094,13 @@ See [Tab Switcher](../tab-switcher.md).
 
 - Description: Whether to show the file icon for a tab.
 - Setting: `file_icons`
-- Default: `false`
+- Default: `true`
 
 ### Git Status
 
 - Description: Whether or not to show Git file status in tab.
 - Setting: `git_status`
-- Default: `false`
+- Default: `true`
 
 ### Activate on close
 
