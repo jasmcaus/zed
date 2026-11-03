@@ -6181,7 +6181,7 @@ impl ProjectPanel {
         // `IconButton` pads custom icon sizes by the icon size itself, so a square
         // button around a large icon has to be built from `ButtonLike`.
         let navigation_icon_button = |id: &'static str, icon: IconName, selected: bool| {
-            let button_size = rems_from_px(40_f32);
+            let button_size = rems_from_px(28_f32);
             ButtonLike::new(id)
                 .width(button_size)
                 .height(button_size.into())
@@ -6212,10 +6212,10 @@ impl ProjectPanel {
             };
 
         h_flex()
-            .h(DynamicSpacing::Base48.px(cx))
+            .h(ui::Tab::container_height(cx))
             .flex_none()
             .justify_center()
-            .gap_2()
+            .gap_4()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
