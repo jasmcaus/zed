@@ -27,6 +27,7 @@ git.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 menu.workspace = true
+search.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true

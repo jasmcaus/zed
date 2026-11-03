@@ -6625,7 +6625,7 @@ See [Changing Vim Mode Settings](../vim.md#changing-vim-mode-settings) for a mor
     "sticky_scroll": true,
     "show_diagnostics": "all",
     "indent_guides": {
-      "show": "always"
+      "show": "hover"
     },
     "sort_mode": "directories_first",
     "sort_order": "default",
@@ -6850,7 +6850,7 @@ These settings belong inside the `project_panel` object.
 {
   "project_panel": {
     "indent_guides": {
-      "show": "always"
+      "show": "hover"
     }
   }
 }
@@ -6858,7 +6858,19 @@ These settings belong inside the `project_panel` object.
 
 **Options**
 
-1. Show indent guides in the project panel
+1. Only show the indent guide of the folder containing the selected entry, and fade the rest in while the project panel is hovered
+
+```json [settings]
+{
+  "project_panel": {
+    "indent_guides": {
+      "show": "hover"
+    }
+  }
+}
+```
+
+2. Always show indent guides in the project panel
 
 ```json [settings]
 {
@@ -6870,7 +6882,7 @@ These settings belong inside the `project_panel` object.
 }
 ```
 
-2. Hide indent guides in the project panel
+3. Hide indent guides in the project panel
 
 ```json [settings]
 {

@@ -951,13 +951,16 @@
     // Settings related to indent guides in the project panel.
     "indent_guides": {
       // When to show indent guides in the project panel.
-      // This setting can take two values:
+      // This setting can take three values:
       //
-      // 1. Always show indent guides:
+      // 1. Only show the active indent guide, revealing the rest while the
+      //    project panel is hovered:
+      //    "hover"
+      // 2. Always show indent guides:
       //    "always"
-      // 2. Never show indent guides:
+      // 3. Never show indent guides:
       //    "never"
-      "show": "always",
+      "show": "hover",
     },
     // Sort order for entries in the project panel.
     // This setting can take three values:

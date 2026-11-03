@@ -1,3 +1,4 @@
+mod project_panel_search;
 pub mod project_panel_settings;
 mod undo;
 mod utils;
@@ -87,6 +88,7 @@ use zed_actions::{
 };
 
 use crate::{
+    project_panel_search::ProjectPanelSearch,
     project_panel_settings::ProjectPanelScrollbarProxy,
     undo::{Change, UndoManager, already_exists_error, project_path_display},
 };
@@ -167,6 +169,19 @@ pub struct ProjectPanel {
     update_visible_entries_task: UpdateVisibleEntriesTask,
     undo_manager: UndoManager,
     state: State,
+    active_view: ActiveView,
+    search: Entity<ProjectPanelSearch>,
+    // Hovering the blank area below the entries doesn't count as hovering the
+    // panel itself, because that area blocks mouse events for what's behind it.
+    entries_hovered: bool,
+    blank_area_hovered: bool,
+    hovered_at: Option<Instant>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ActiveView {
+    Explorer,
+    Search,
 }
 
 struct UpdateVisibleEntriesTask {
@@ -390,6 +405,8 @@ actions!(
         ExpandAllEntries,
         /// Rescans the project's files from disk.
         Refresh,
+        /// Shows the search view in the project panel and focuses its query.
+        FocusSearch,
         /// Creates a new directory.
         NewDirectory,
         /// Creates a new file.
@@ -544,6 +561,13 @@ pub fn init(cx: &mut App) {
                         .unwrap_or(false),
                 );
             })
+        });
+
+        workspace.register_action(|workspace, _: &FocusSearch, window, cx| {
+            workspace.open_panel::<ProjectPanel>(window, cx);
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| panel.show_search(window, cx));
+            }
         });
 
         workspace.register_action(|workspace, action: &CollapseAllEntries, window, cx| {
@@ -930,6 +954,13 @@ impl ProjectPanel {
                     project.read(cx).is_via_collab(),
                     &cx,
                 ),
+                active_view: ActiveView::Explorer,
+                entries_hovered: false,
+                blank_area_hovered: false,
+                hovered_at: None,
+                search: cx.new(|cx| {
+                    ProjectPanelSearch::new(project.clone(), workspace.weak_handle(), window, cx)
+                }),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -1108,6 +1139,23 @@ impl ProjectPanel {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
         }
+        if self.active_view == ActiveView::Search {
+            self.search
+                .update(cx, |search, cx| search.focus_query(window, cx));
+        }
+    }
+
+    fn show_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.active_view = ActiveView::Search;
+        self.search
+            .update(cx, |search, cx| search.focus_query(window, cx));
+        cx.notify();
+    }
+
+    fn show_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.active_view = ActiveView::Explorer;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
     }
 
     /// Whether keyboard focus is within the panel, including a deployed context menu.
@@ -6109,6 +6157,22 @@ impl ProjectPanel {
         false
     }
 
+    /// How far the hover-only indent guides have faded in, from 0 to 1.
+    fn indent_guides_reveal(&mut self, window: &Window) -> f32 {
+        const FADE_IN_DURATION: Duration = Duration::from_millis(150);
+
+        if !self.entries_hovered && !self.blank_area_hovered {
+            self.hovered_at = None;
+            return 0.;
+        }
+        let hovered_at = *self.hovered_at.get_or_insert_with(Instant::now);
+        let progress = hovered_at.elapsed().as_secs_f32() / FADE_IN_DURATION.as_secs_f32();
+        if progress < 1. {
+            window.request_animation_frame();
+        }
+        progress.min(1.)
+    }
+
     fn render_navigation_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
         let navigation_button =
@@ -6137,18 +6201,26 @@ impl ProjectPanel {
             .child(
                 IconButton::new("project-panel-explorer", IconName::FileMultiple)
                     .icon_size(IconSize::Small)
-                    .toggle_state(true)
+                    .toggle_state(self.active_view == ActiveView::Explorer)
                     .tooltip(Tooltip::text("Explorer"))
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.focus_handle.focus(window, cx);
+                        this.show_explorer(window, cx);
                     })),
             )
-            .child(navigation_button(
-                "project-panel-search",
-                IconName::MagnifyingGlass,
-                "Search",
-                Box::new(workspace::DeploySearch::default()),
-            ))
+            .child(
+                IconButton::new("project-panel-search", IconName::MagnifyingGlass)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(self.active_view == ActiveView::Search)
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |_window, cx| {
+                            Tooltip::for_action_in("Search", &FocusSearch, &focus_handle, cx)
+                        }
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_search(window, cx);
+                    })),
+            )
             .child(navigation_button(
                 "project-panel-source-control",
                 IconName::GitBranch,
@@ -7709,11 +7781,29 @@ impl Render for ProjectPanel {
             self.clear_drag_state(cx);
         }
 
+        if self.active_view == ActiveView::Search {
+            return v_flex()
+                .id("project-panel-search-wrapper")
+                .size_full()
+                .track_focus(&self.focus_handle(cx))
+                .child(self.render_navigation_bar(cx))
+                .child(self.search.clone());
+        }
+
         let has_worktree = !self.state.visible_entries.is_empty();
         let project = self.project.read(cx);
         let panel_settings = ProjectPanelSettings::get_global(cx);
         let indent_size = panel_settings.indent_size;
-        let show_indent_guides = panel_settings.indent_guides.show == ShowIndentGuides::Always;
+        let show_indent_guides = panel_settings.indent_guides.show != ShowIndentGuides::Never;
+        let indent_guide_colors = {
+            let mut colors = IndentGuideColors::panel(cx);
+            if panel_settings.indent_guides.show == ShowIndentGuides::Hover {
+                let reveal = self.indent_guides_reveal(window);
+                colors.default = colors.default.opacity(reveal);
+                colors.hover = colors.hover.opacity(reveal);
+            }
+            colors
+        };
         let horizontal_scroll = panel_settings.scrollbar.horizontal_scroll;
         let show_sticky_entries = {
             if panel_settings.sticky_scroll {
@@ -7814,6 +7904,10 @@ impl Render for ProjectPanel {
             h_flex()
                 .id("project-panel")
                 .group("project-panel")
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    this.entries_hovered = *hovered;
+                    cx.notify();
+                }))
                 .when(panel_settings.drag_and_drop, |this| {
                     this.on_drag_move(cx.listener(handle_drag_move::<ExternalPaths>))
                         .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
@@ -7934,64 +8028,61 @@ impl Render for ProjectPanel {
                             })
                             .when(show_indent_guides, |list| {
                                 list.with_decoration(
-                                    ui::indent_guides(
-                                        px(indent_size),
-                                        IndentGuideColors::panel(cx),
-                                    )
-                                    .with_compute_indents_fn(
-                                        cx.entity(),
-                                        |this, range, window, cx| {
-                                            let mut items =
-                                                SmallVec::with_capacity(range.end - range.start);
-                                            this.iter_visible_entries(
-                                                range,
-                                                window,
-                                                cx,
-                                                &mut |entry, _, entries, _, _| {
-                                                    let (depth, _) =
-                                                        Self::calculate_depth_and_difference(
-                                                            entry, entries,
-                                                        );
-                                                    items.push(depth);
-                                                },
-                                            );
-                                            items
-                                        },
-                                    )
-                                    .on_click(cx.listener(
-                                        |this,
-                                         active_indent_guide: &IndentGuideLayout,
-                                         window,
-                                         cx| {
-                                            if window.modifiers().secondary(cx) {
-                                                let ix = active_indent_guide.offset.y;
-                                                let Some((target_entry, worktree)) = maybe!({
-                                                    let (worktree_id, entry) =
-                                                        this.entry_at_index(ix)?;
-                                                    let worktree = this
-                                                        .project
-                                                        .read(cx)
-                                                        .worktree_for_id(worktree_id, cx)?;
-                                                    let target_entry = worktree
-                                                        .read(cx)
-                                                        .entry_for_path(&entry.path.parent()?)?;
-                                                    Some((target_entry, worktree))
-                                                }) else {
-                                                    return;
-                                                };
-
-                                                this.collapse_entry(
-                                                    target_entry.clone(),
-                                                    worktree,
+                                    ui::indent_guides(px(indent_size), indent_guide_colors.clone())
+                                        .with_compute_indents_fn(
+                                            cx.entity(),
+                                            |this, range, window, cx| {
+                                                let mut items = SmallVec::with_capacity(
+                                                    range.end - range.start,
+                                                );
+                                                this.iter_visible_entries(
+                                                    range,
                                                     window,
                                                     cx,
+                                                    &mut |entry, _, entries, _, _| {
+                                                        let (depth, _) =
+                                                            Self::calculate_depth_and_difference(
+                                                                entry, entries,
+                                                            );
+                                                        items.push(depth);
+                                                    },
                                                 );
-                                            }
-                                        },
-                                    ))
-                                    .with_render_fn(
-                                        cx.entity(),
-                                        move |this, params, _, cx| {
+                                                items
+                                            },
+                                        )
+                                        .on_click(cx.listener(
+                                            |this,
+                                             active_indent_guide: &IndentGuideLayout,
+                                             window,
+                                             cx| {
+                                                if window.modifiers().secondary(cx) {
+                                                    let ix = active_indent_guide.offset.y;
+                                                    let Some((target_entry, worktree)) = maybe!({
+                                                        let (worktree_id, entry) =
+                                                            this.entry_at_index(ix)?;
+                                                        let worktree = this
+                                                            .project
+                                                            .read(cx)
+                                                            .worktree_for_id(worktree_id, cx)?;
+                                                        let target_entry =
+                                                            worktree.read(cx).entry_for_path(
+                                                                &entry.path.parent()?,
+                                                            )?;
+                                                        Some((target_entry, worktree))
+                                                    }) else {
+                                                        return;
+                                                    };
+
+                                                    this.collapse_entry(
+                                                        target_entry.clone(),
+                                                        worktree,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            },
+                                        ))
+                                        .with_render_fn(cx.entity(), move |this, params, _, cx| {
                                             const LEFT_OFFSET: Pixels =
                                                 ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET;
                                             const PADDING_Y: Pixels = px(4.);
@@ -8047,8 +8138,7 @@ impl Render for ProjectPanel {
                                                     }
                                                 })
                                                 .collect()
-                                        },
-                                    ),
+                                        }),
                                 )
                             })
                             .when(show_sticky_entries, |list| {
@@ -8084,7 +8174,7 @@ impl Render for ProjectPanel {
                                     sticky_items.with_decoration(
                                         ui::indent_guides(
                                             px(indent_size),
-                                            IndentGuideColors::panel(cx),
+                                            indent_guide_colors.clone(),
                                         )
                                         .with_render_fn(
                                             cx.entity(),
@@ -8146,6 +8236,19 @@ impl Render for ProjectPanel {
                                 .focus_follows_mouse(
                                     WorkspaceSettings::get_global(cx).focus_follows_mouse,
                                     cx,
+                                )
+                                .relative()
+                                // Focus follows mouse already owns this element's hover
+                                // listener, so track hovering it with an overlay instead.
+                                .child(
+                                    div()
+                                        .id("project-panel-blank-area-hover")
+                                        .absolute()
+                                        .inset_0()
+                                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                            this.blank_area_hovered = *hovered;
+                                            cx.notify();
+                                        })),
                                 )
                                 .flex_grow_1()
                                 .on_scroll({

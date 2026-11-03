@@ -80,7 +80,8 @@ actions!(
     ]
 );
 
-fn split_glob_patterns(text: &str) -> Vec<&str> {
+/// Splits a comma separated list of globs, ignoring commas inside braces.
+pub fn split_glob_patterns(text: &str) -> Vec<&str> {
     let mut patterns = Vec::new();
     let mut pattern_start = 0;
     let mut brace_depth: usize = 0;
