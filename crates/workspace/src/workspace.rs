@@ -612,14 +612,25 @@ actions!(
 );
 
 /// Toggles the file finder interface.
-#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
+#[derive(PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = file_finder, name = "Toggle")]
 #[serde(deny_unknown_fields)]
 pub struct ToggleFileFinder {
-    #[serde(default)]
+    /// Whether recently opened files that match the query are listed above
+    /// the other results, rather than ranked among them.
+    #[serde(default = "default_true")]
     pub separate_history: bool,
     #[serde(default)]
     pub include_ignored: Option<bool>,
+}
+
+impl Default for ToggleFileFinder {
+    fn default() -> Self {
+        Self {
+            separate_history: true,
+            include_ignored: None,
+        }
+    }
 }
 
 /// Opens a new terminal in the center.

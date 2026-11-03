@@ -517,8 +517,7 @@ TBD: Centered layout related settings
     // "unicode":  Pure Unicode codepoint comparison, no case folding.
     // "extension": Files grouped by extension, extensionless files (including dotfiles like ".gitignore") first.
     "sort_order": "default",
-    // Whether to hide the root entry when only one folder is open in the window;
-    // this also affects how file paths appear in the file finder history.
+    // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false

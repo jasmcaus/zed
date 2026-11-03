@@ -2242,7 +2242,7 @@ async fn test_history_labels_do_not_include_worktree_root_name(cx: &mut gpui::Te
 }
 
 #[gpui::test]
-async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
+async fn test_labels_omit_worktree_root_name_for_single_folder_when_hide_root_false(
     cx: &mut gpui::TestAppContext,
 ) {
     let app_state = init_test(cx);
@@ -2264,6 +2264,7 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
                 "src": {
                     "first.rs": "// First Rust file",
                     "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
                 }
             }),
         )
@@ -2285,8 +2286,44 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
         let (_file_label, path_label) = finder.delegate.labels_for_match(&matches[0], window, cx);
         assert_eq!(
             path_label.text(),
-            format!("my_project{separator}src{separator}"),
-            "With hide_root=false, history path label should include root name 'my_project'"
+            format!("src{separator}"),
+            "With a single folder open, history path label should omit root name 'my_project'"
+        );
+    });
+
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder.delegate.update_matches("third".to_string(), window, cx)
+        })
+        .await;
+    picker.update_in(cx, |finder, window, cx| {
+        let matches = &finder.delegate.matches.matches;
+        let separator = PathStyle::local().primary_separator();
+        assert_matches!(matches[0], Match::Search(_));
+        let (_file_label, path_label) = finder.delegate.labels_for_match(&matches[0], window, cx);
+        assert_eq!(
+            path_label.text(),
+            format!("src{separator}"),
+            "With a single folder open, search path label should omit root name 'my_project'"
+        );
+    });
+
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches("my_project".to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert!(
+            finder
+                .delegate
+                .matches
+                .matches
+                .iter()
+                .all(|m| matches!(m, Match::CreateNew(_))),
+            "The root folder name should not match every file in it"
         );
     });
 }
@@ -3235,7 +3272,10 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
     open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
     open_queried_buffer("main", 1, "main.rs", &workspace, cx).await;
 
-    cx.dispatch_action(ToggleFileFinder::default());
+    cx.dispatch_action(ToggleFileFinder {
+        separate_history: false,
+        include_ignored: None,
+    });
     let picker = active_file_picker(&workspace, cx);
     // main.rs is on top, previously used is selected
     picker.update(cx, |finder, _| {
@@ -3301,6 +3341,74 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
         assert_match_selection(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "lib.rs");
         assert_match_at_position(finder, 2, "bar.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_default_toggle_lists_matching_history_first(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "bar.rs": "// Bar file",
+                    "lib.rs": "// Lib file",
+                    "maaa.rs": "// Maaaaaaa",
+                    "main.rs": "// Main file",
+                    "moo.rs": "// Moooooo",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
+    open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
+    open_queried_buffer("main", 1, "main.rs", &workspace, cx).await;
+
+    cx.dispatch_action(ToggleFileFinder::default());
+    let picker = active_file_picker(&workspace, cx);
+
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches(".rs".to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_match_at_position(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "bar.rs");
+        assert_match_at_position(finder, 2, "lib.rs");
+        assert_match_at_position(finder, 3, "moo.rs");
+        assert_match_at_position(finder, 4, "maaa.rs");
+        assert_eq!(finder.delegate.separators_after_indices(), vec![2]);
+    });
+
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder.delegate.update_matches("moo".to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_match_at_position(finder, 0, "moo.rs");
+        assert!(
+            finder
+                .delegate
+                .matches
+                .matches
+                .iter()
+                .all(|m| !matches!(m, Match::History { .. })),
+            "History items that don't match the query should not be listed"
+        );
     });
 }
 
