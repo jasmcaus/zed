@@ -7814,3 +7814,59 @@ fn set_file_scan_depth(cx: &mut TestAppContext, depth: Option<u32>) {
         });
     });
 }
+
+#[gpui::test]
+async fn test_rescan_picks_up_changes_missed_by_watcher(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir": {
+                "existing.txt": "",
+            },
+            "gone.txt": "",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    fs.pause_events();
+    fs.insert_file(path!("/root/dir/added.txt"), Vec::new())
+        .await;
+    fs.remove_file(path!("/root/gone.txt").as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+    fs.clear_buffered_events();
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("dir/added.txt")).is_none());
+        assert!(tree.entry_for_path(rel_path("gone.txt")).is_some());
+    });
+
+    let mut rescan = tree.read_with(cx, |tree, _| tree.as_local().unwrap().rescan());
+    cx.run_until_parked();
+    rescan.recv().await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("dir/added.txt")).is_some());
+        assert!(tree.entry_for_path(rel_path("gone.txt")).is_none());
+        assert!(tree.entry_for_path(rel_path("dir/existing.txt")).is_some());
+    });
+}

@@ -22,6 +22,7 @@ use crate::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
         HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
+    document_symbols::has_outline_symbols,
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, GitGutterWidth, Minimap, MinimapThumb,
         MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap,
@@ -40,6 +41,7 @@ use crate::{
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
+use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
@@ -80,6 +82,7 @@ use std::{
     fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
+    path::Path,
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -94,7 +97,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::{ResultExt, debug_panic};
 use workspace::{
     CollaboratorId, ItemHandle, Workspace,
-    item::{Item, ItemBufferKind},
+    item::{Item, ItemBufferKind, ItemSettings},
 };
 
 /// Determines what kinds of highlights should be applied to a lines background.
@@ -7131,7 +7134,6 @@ impl Gutter<'_> {
 pub fn render_breadcrumb_text(
     mut segments: Vec<HighlightedText>,
     breadcrumb_font: Option<Font>,
-    prefix: Option<gpui::AnyElement>,
     active_item: &dyn ItemHandle,
     multibuffer_header: bool,
     window: &mut Window,
@@ -7157,34 +7159,93 @@ pub fn render_breadcrumb_text(
         );
     }
 
-    let highlighted_segments = segments.into_iter().enumerate().map(|(index, segment)| {
-        let mut text_style = window.text_style();
-        if let Some(font) = &breadcrumb_font {
-            text_style.font_family = font.family.clone();
-            text_style.font_features = font.features.clone();
-            text_style.font_style = font.style;
-            text_style.font_weight = font.weight;
-        }
-        text_style.color = Color::Muted.color(cx);
+    let mut text_style = window.text_style();
+    if let Some(font) = &breadcrumb_font {
+        text_style.font_family = font.family.clone();
+        text_style.font_features = font.features.clone();
+        text_style.font_style = font.style;
+        text_style.font_weight = font.weight;
+    }
+    // Derived from the text color rather than `Color::Muted`, which some themes
+    // set to the same value as regular text.
+    text_style.color = cx.theme().colors().text.opacity(0.8);
 
-        if index == 0
-            && !workspace::TabBarSettings::get_global(cx).show
-            && active_item.is_dirty(cx)
-            && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
-        {
-            return styled_element;
-        }
-
+    let is_dirty_without_tab_bar =
+        !workspace::TabBarSettings::get_global(cx).show && active_item.is_dirty(cx);
+    let render_segment = |segment: HighlightedText| {
         StyledText::new(segment.text.replace('\n', " "))
             .with_default_highlights(&text_style, segment.highlights)
             .into_any()
-    });
+    };
 
-    let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
+    let editor = active_item.downcast::<Editor>();
+    let file_breadcrumb = editor
+        .as_ref()
+        .filter(|_| !multibuffer_header)
+        .and_then(|editor| {
+            let editor = editor.read(cx);
+            if editor.breadcrumb_header.is_some() {
+                return None;
+            }
+            let buffer = editor.buffer().read(cx).as_singleton()?.read(cx);
+            let path_style = buffer.file()?.path_style(cx);
+            Some((path_style, has_outline_symbols(buffer, cx)))
+        });
+
+    let mut segments = segments.into_iter();
+    let mut highlighted_segments = Vec::with_capacity(segments.len());
+    if let Some((path_style, supports_outline)) = file_breadcrumb {
+        if let Some(path_segment) = segments.next() {
+            let mut components = path_segment
+                .text
+                .split(path_style.separators_ch())
+                .filter(|component| !component.is_empty())
+                .peekable();
+            while let Some(component) = components.next() {
+                highlighted_segments.push(if components.peek().is_some() {
+                    render_segment(HighlightedText {
+                        text: component.to_string().into(),
+                        highlights: Vec::new(),
+                    })
+                } else {
+                    render_file_name_breadcrumb(
+                        component,
+                        is_dirty_without_tab_bar,
+                        &text_style,
+                        cx,
+                    )
+                });
+            }
+        }
+
+        let has_symbols_at_cursor = segments.len() > 0;
+        highlighted_segments.extend(segments.map(render_segment));
+        // Hint that the symbol outline is available even when the cursor
+        // isn't inside any symbol, rather than ending the breadcrumbs abruptly.
+        if !has_symbols_at_cursor && supports_outline {
+            highlighted_segments.push(render_segment(HighlightedText {
+                text: "…".into(),
+                highlights: Vec::new(),
+            }));
+        }
+    } else {
+        for (index, segment) in segments.enumerate() {
+            if index == 0
+                && is_dirty_without_tab_bar
+                && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
+            {
+                highlighted_segments.push(styled_element);
+            } else {
+                highlighted_segments.push(render_segment(segment));
+            }
+        }
+    }
+
+    let breadcrumbs = Itertools::intersperse_with(highlighted_segments.into_iter(), || {
         Label::new("›").color(Color::Placeholder).into_any_element()
     });
 
-    let breadcrumbs_stack = h_flex()
+    let breadcrumbs = h_flex()
         .gap_1()
         .when(multibuffer_header, |this| {
             this.pl_2()
@@ -7193,15 +7254,7 @@ pub fn render_breadcrumb_text(
         })
         .children(breadcrumbs);
 
-    let breadcrumbs = if let Some(prefix) = prefix {
-        h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
-    } else {
-        breadcrumbs_stack
-    };
-
-    let editor = active_item
-        .downcast::<Editor>()
-        .map(|editor| editor.downgrade());
+    let editor = editor.map(|editor| editor.downgrade());
 
     let has_project_path = active_item.project_path(cx).is_some();
 
@@ -7283,6 +7336,42 @@ pub fn render_breadcrumb_text(
             .child(breadcrumbs)
             .into_any_element(),
     }
+}
+
+fn render_file_name_breadcrumb(
+    file_name: &str,
+    is_dirty: bool,
+    text_style: &gpui::TextStyle,
+    cx: &App,
+) -> gpui::AnyElement {
+    let segment = HighlightedText {
+        text: file_name.to_string().into(),
+        highlights: Vec::new(),
+    };
+    let label = is_dirty
+        .then(|| apply_dirty_filename_style(&segment, text_style, cx))
+        .flatten()
+        .unwrap_or_else(|| {
+            StyledText::new(segment.text)
+                .with_default_highlights(text_style, [])
+                .into_any()
+        });
+    let icon = ItemSettings::get_global(cx)
+        .file_icons
+        .then(|| FileIcons::get_icon(Path::new(file_name), cx))
+        .flatten();
+
+    h_flex()
+        .gap_1()
+        .when_some(icon, |this, icon| {
+            this.child(
+                Icon::from_path(icon)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+        })
+        .child(label)
+        .into_any_element()
 }
 
 fn apply_dirty_filename_style(

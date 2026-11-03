@@ -5710,7 +5710,7 @@ impl Render for OutlinePanel {
         let pinned = self.pinned;
         let settings = OutlinePanelSettings::get_global(cx);
         let indent_size = settings.indent_size;
-        let show_indent_guides = settings.indent_guides.show == ShowIndentGuides::Always;
+        let show_indent_guides = settings.indent_guides.show != ShowIndentGuides::Never;
 
         let search_query = match &self.mode {
             ItemsDisplayMode::Search(search_query) => Some(search_query),

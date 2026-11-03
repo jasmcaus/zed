@@ -340,10 +340,10 @@ TBD: Centered layout related settings
     "show_tab_bar_buttons": true      // Show hide buttons (new, split, zoom)
   },
   "tabs": {
-    "git_status": false,              // Color to show git status
+    "git_status": true,               // Color to show git status
     "close_position": "right",        // Close button position (left, right, hidden)
     "show_close_button": "hover",     // Close button shown (hover, always, hidden)
-    "file_icons": false,              // Icon showing file type
+    "file_icons": true,               // Icon showing file type
     // Show diagnostics in file icon (off, errors, all). Requires file_icons=true
     "show_diagnostics": "off"
   }
@@ -517,8 +517,7 @@ TBD: Centered layout related settings
     // "unicode":  Pure Unicode codepoint comparison, no case folding.
     // "extension": Files grouped by extension, extensionless files (including dotfiles like ".gitignore") first.
     "sort_order": "default",
-    // Whether to hide the root entry when only one folder is open in the window;
-    // this also affects how file paths appear in the file finder history.
+    // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false

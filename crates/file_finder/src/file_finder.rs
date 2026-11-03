@@ -25,7 +25,7 @@ use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
 
-use settings::{ModalWidthContent, SeedQuerySetting, Settings, SettingsStore};
+use settings::{ModalWidthContent, SeedQuerySetting, Settings};
 use std::{
     borrow::Cow,
     cmp, mem,
@@ -814,21 +814,15 @@ fn matching_history_items<'a>(
     matching_history_paths
 }
 
+/// With a single folder open, every path is relative to that folder, so its
+/// name adds noise to every label and gives the query a prefix to falsely match.
 fn should_hide_root_in_entry_path(worktree_store: &Entity<WorktreeStore>, cx: &App) -> bool {
-    let multiple_worktrees = worktree_store
+    worktree_store
         .read(cx)
         .visible_worktrees(cx)
         .filter(|worktree| !worktree.read(cx).is_single_file())
         .nth(1)
-        .is_some();
-    let hide_root = cx
-        .global::<SettingsStore>()
-        .merged_settings()
-        .project_panel
-        .as_ref()
-        .and_then(|project_panel| project_panel.hide_root)
-        .unwrap_or(false);
-    hide_root && !multiple_worktrees
+        .is_none()
 }
 
 fn worktree_names_for_history_matching(
@@ -1563,10 +1557,12 @@ impl FileFinderDelegate {
 
         (
             HighlightedLabel::new(file_name, file_name_positions).single_line(),
+            // Derived from the text color rather than `Color::Muted`, which some
+            // themes set to the same value as regular text.
             HighlightedLabel::new(full_path, full_path_positions)
                 .single_line()
                 .size(LabelSize::Small)
-                .color(Color::Muted),
+                .color(Color::Custom(cx.theme().colors().text.opacity(0.7))),
         )
     }
 

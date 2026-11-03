@@ -245,6 +245,14 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
         .lsp_enabled()
 }
 
+pub(crate) fn has_outline_symbols(buffer: &Buffer, cx: &App) -> bool {
+    lsp_symbols_enabled(buffer, cx)
+        || buffer
+            .language()
+            .and_then(|language| language.grammar())
+            .is_some_and(|grammar| grammar.outline_config.is_some())
+}
+
 /// Finds where the symbol name appears in the buffer and returns combined
 /// (tree-sitter + semantic token) highlights for those positions.
 ///

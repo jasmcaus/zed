@@ -163,6 +163,7 @@ pub struct PathPrefixScanRequest {
 
 struct ScanRequest {
     relative_paths: Vec<Arc<RelPath>>,
+    rescan: bool,
     done: SmallVec<[barrier::Sender; 1]>,
 }
 
@@ -2123,6 +2124,21 @@ impl LocalWorktree {
         self.scan_requests_tx
             .try_send(ScanRequest {
                 relative_paths: paths,
+                rescan: false,
+                done: smallvec![tx],
+            })
+            .ok();
+        rx
+    }
+
+    /// Rescans the whole worktree from disk, picking up any changes that the
+    /// file system watcher may have missed.
+    pub fn rescan(&self) -> barrier::Receiver {
+        let (tx, rx) = barrier::channel();
+        self.scan_requests_tx
+            .try_send(ScanRequest {
+                relative_paths: Vec::new(),
+                rescan: true,
                 done: smallvec![tx],
             })
             .ok();
@@ -4602,6 +4618,21 @@ impl BackgroundScanner {
                 // these before handling changes reported by the filesystem.
                 request = self.next_scan_request().fuse() => {
                     let Ok(request) = request else { break };
+                    // Treat a rescan like a watcher overflow on the root, so the
+                    // whole tree and its git state get reloaded through the same
+                    // path used when the file system watcher loses events.
+                    if request.rescan {
+                        let root_path = self.state.lock().await.snapshot.abs_path.clone();
+                        if let Some(root_canonical_path) =
+                            self.fs.canonicalize(root_path.as_path()).await.log_err()
+                        {
+                            self.process_events(vec![PathEvent {
+                                path: root_canonical_path,
+                                kind: Some(PathEventKind::Rescan),
+                            }])
+                            .await;
+                        }
+                    }
                     if !self.process_scan_request(request, false).await {
                         return;
                     }
@@ -6329,6 +6360,7 @@ impl BackgroundScanner {
         let mut request = self.scan_requests_rx.recv().await?;
         while let Ok(next_request) = self.scan_requests_rx.try_recv() {
             request.relative_paths.extend(next_request.relative_paths);
+            request.rescan |= next_request.rescan;
             request.done.extend(next_request.done);
         }
         Ok(request)
@@ -7591,6 +7623,7 @@ mod tests {
                 .process_scan_request(
                     ScanRequest {
                         relative_paths: vec![rel_path(".gitignore").into_arc()],
+                        rescan: false,
                         done: SmallVec::new(),
                     },
                     true,
@@ -7637,6 +7670,7 @@ mod tests {
                         ]
                         .map(|path| rel_path(path).into_arc())
                         .to_vec(),
+                        rescan: false,
                         done: SmallVec::new(),
                     },
                     true,

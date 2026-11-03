@@ -1311,6 +1311,8 @@ pub enum DockSide {
 pub enum ShowIndentGuides {
     Always,
     Never,
+    /// Only show the active indent guide until the panel is hovered.
+    Hover,
 }
 
 #[with_fallible_options]

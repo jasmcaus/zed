@@ -13749,3 +13749,91 @@ fn entry_row_bounds(panel: &ProjectPanel, entry_id: ProjectEntryId) -> Bounds<Pi
         size(viewport.size.width, row_height),
     )
 }
+
+#[gpui::test]
+async fn test_sidebar_search(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "first.rs": "fn first() {\n    let needle = 1;\n}\n",
+                "second.rs": "// needle and needle\n",
+            },
+            "other.rs": "nothing here\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    cx.dispatch_action(FocusSearch);
+    cx.run_until_parked();
+    let search = panel.read_with(cx, |panel, _| {
+        assert!(panel.active_view == ActiveView::Search);
+        panel.search.clone()
+    });
+    search.update_in(cx, |search, window, cx| {
+        assert!(search.is_query_focused(window, cx));
+        search.set_query(path!("needle"), window, cx);
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(
+        search.read_with(cx, |search, _| search.results_summary()),
+        vec![
+            (
+                "first.rs".to_string(),
+                vec!["let «needle» = 1;".to_string()]
+            ),
+            (
+                "second.rs".to_string(),
+                vec![
+                    "// «needle» and needle".to_string(),
+                    "// needle and «needle»".to_string()
+                ]
+            ),
+        ]
+    );
+
+    search.update_in(cx, |search, window, cx| {
+        search.set_replacement("pin", window, cx);
+        search.replace_all(window, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_prompt_answer("Replace");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(
+        fs.load(path!("/root/src/first.rs").as_ref()).await.unwrap(),
+        "fn first() {\n    let pin = 1;\n}\n"
+    );
+    assert_eq!(
+        fs.load(path!("/root/src/second.rs").as_ref())
+            .await
+            .unwrap(),
+        "// pin and pin\n"
+    );
+    assert_eq!(
+        search.read_with(cx, |search, _| search.results_summary()),
+        Vec::new()
+    );
+
+    panel.update_in(cx, |panel, window, cx| panel.show_explorer(window, cx));
+    panel.read_with(cx, |panel, _| {
+        assert!(panel.active_view == ActiveView::Explorer)
+    });
+}

@@ -13992,6 +13992,7 @@ dependencies = [
  "project",
  "rayon",
  "schemars 1.0.4",
+ "search",
  "serde",
  "serde_json",
  "settings",

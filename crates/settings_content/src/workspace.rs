@@ -183,7 +183,7 @@ pub struct WorkspaceSettingsContent {
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
     ///
-    /// Default: false
+    /// Default: true
     pub git_status: Option<bool>,
     /// Position of the close button in a tab.
     ///
@@ -191,7 +191,7 @@ pub struct ItemSettingsContent {
     pub close_position: Option<ClosePosition>,
     /// Whether to show the file icon for a tab.
     ///
-    /// Default: false
+    /// Default: true
     pub file_icons: Option<bool>,
     /// What to do after closing the current tab.
     ///
