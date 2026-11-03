@@ -590,6 +590,7 @@ pub fn init(cx: &mut App) {
             workspace.open_panel::<ProjectPanel>(window, cx);
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| {
+                    panel.active_view = ActiveView::Explorer;
                     if let Some(first_marked) = panel.marked_entries.first() {
                         let first_marked = *first_marked;
                         panel.marked_entries.clear();
@@ -604,6 +605,7 @@ pub fn init(cx: &mut App) {
             workspace.open_panel::<ProjectPanel>(window, cx);
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| {
+                    panel.active_view = ActiveView::Explorer;
                     panel.duplicate(action, window, cx);
                 });
             }
@@ -791,6 +793,7 @@ impl ProjectPanel {
                             .reveal_entry(project.clone(), *entry_id, false, window, cx)
                             .log_err()
                         {
+                            this.active_view = ActiveView::Explorer;
                             cx.emit(PanelEvent::Activate);
                         }
                     }
