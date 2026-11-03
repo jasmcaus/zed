@@ -388,6 +388,8 @@ actions!(
         CollapseAllEntries,
         /// Expands all entries in the project tree.
         ExpandAllEntries,
+        /// Rescans the project's files from disk.
+        Refresh,
         /// Creates a new directory.
         NewDirectory,
         /// Creates a new file.
@@ -1669,6 +1671,14 @@ impl ProjectPanel {
     ) {
         let roots = self.all_worktree_roots(cx);
         self.collapse_worktree_roots(roots, window, cx);
+    }
+
+    fn refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
+        for worktree in self.project.read(cx).visible_worktrees(cx) {
+            if let Some(local_worktree) = worktree.read(cx).as_local() {
+                local_worktree.rescan();
+            }
+        }
     }
 
     fn expand_all_entries(
@@ -6099,6 +6109,145 @@ impl ProjectPanel {
         false
     }
 
+    fn render_navigation_bar(&self, cx: &Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+        let navigation_button =
+            |id: &'static str, icon: IconName, tooltip: &'static str, action: Box<dyn Action>| {
+                let focus_handle = focus_handle.clone();
+                IconButton::new(id, icon)
+                    .icon_size(IconSize::Small)
+                    .tooltip({
+                        let action = action.boxed_clone();
+                        move |_window, cx| {
+                            Tooltip::for_action_in(tooltip, action.as_ref(), &focus_handle, cx)
+                        }
+                    })
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    })
+            };
+
+        h_flex()
+            .h(ui::Tab::container_height(cx))
+            .flex_none()
+            .px_1p5()
+            .gap_0p5()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                IconButton::new("project-panel-explorer", IconName::FileMultiple)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(true)
+                    .tooltip(Tooltip::text("Explorer"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.focus_handle.focus(window, cx);
+                    })),
+            )
+            .child(navigation_button(
+                "project-panel-search",
+                IconName::MagnifyingGlass,
+                "Search",
+                Box::new(workspace::DeploySearch::default()),
+            ))
+            .child(navigation_button(
+                "project-panel-source-control",
+                IconName::GitBranch,
+                "Source Control",
+                Box::new(zed_actions::git_panel::ToggleFocus),
+            ))
+            .child(navigation_button(
+                "project-panel-extensions",
+                IconName::Blocks,
+                "Extensions",
+                Box::new(zed_actions::Extensions::default()),
+            ))
+    }
+
+    fn render_root_actions(
+        &self,
+        worktree_id: WorktreeId,
+        root_entry_id: ProjectEntryId,
+        cx: &Context<Self>,
+    ) -> Div {
+        let project = self.project.read(cx);
+        let can_edit = !project.is_read_only(cx);
+        let is_local = project.is_local();
+        let focus_handle = self.focus_handle(cx);
+        let tooltip = |label: &'static str, action: Box<dyn Action>| {
+            let focus_handle = focus_handle.clone();
+            move |_window: &mut Window, cx: &mut App| {
+                Tooltip::for_action_in(label, action.as_ref(), &focus_handle, cx)
+            }
+        };
+
+        h_flex()
+            .flex_none()
+            .pr_1()
+            .when(can_edit, |this| {
+                this.child(
+                    IconButton::new("project-panel-new-file", IconName::FilePlus)
+                        .size(ButtonSize::Compact)
+                        .icon_size(IconSize::Small)
+                        .tooltip(tooltip("New File…", Box::new(NewFile)))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_worktree_root_unless_within(worktree_id, root_entry_id);
+                            this.new_file(&NewFile, window, cx);
+                        })),
+                )
+                .child(
+                    IconButton::new("project-panel-new-folder", IconName::FolderAdd)
+                        .size(ButtonSize::Compact)
+                        .icon_size(IconSize::Small)
+                        .tooltip(tooltip("New Folder…", Box::new(NewDirectory)))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_worktree_root_unless_within(worktree_id, root_entry_id);
+                            this.new_directory(&NewDirectory, window, cx);
+                        })),
+                )
+            })
+            .when(is_local, |this| {
+                this.child(
+                    IconButton::new("project-panel-refresh", IconName::RotateCw)
+                        .size(ButtonSize::Compact)
+                        .icon_size(IconSize::Small)
+                        .tooltip(tooltip("Refresh Explorer", Box::new(Refresh)))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.refresh(&Refresh, window, cx);
+                        })),
+                )
+            })
+            .child(
+                IconButton::new("project-panel-collapse-all", IconName::ListCollapse)
+                    .size(ButtonSize::Compact)
+                    .icon_size(IconSize::Small)
+                    .tooltip(tooltip(
+                        "Collapse Folders in Explorer",
+                        Box::new(CollapseAllEntries),
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.collapse_all_entries(&CollapseAllEntries, window, cx);
+                    })),
+            )
+    }
+
+    /// Lets the root row's new file and new folder buttons create the entry
+    /// within that worktree, while still honoring a selection already inside it.
+    fn select_worktree_root_unless_within(
+        &mut self,
+        worktree_id: WorktreeId,
+        root_entry_id: ProjectEntryId,
+    ) {
+        if self
+            .selection
+            .is_none_or(|selection| selection.worktree_id != worktree_id)
+        {
+            self.selection = Some(SelectedEntry {
+                worktree_id,
+                entry_id: root_entry_id,
+            });
+        }
+    }
+
     fn render_entry(
         &self,
         entry_id: ProjectEntryId,
@@ -6228,6 +6377,8 @@ impl ProjectPanel {
             .git_status_indicator
             .then(|| git_status_indicator(details.git_status))
             .flatten();
+        let root_actions = (path.is_empty() && !show_editor)
+            .then(|| self.render_root_actions(worktree_id, entry_id, cx));
 
         let id: ElementId = if is_sticky {
             SharedString::from(format!("project_panel_sticky_item_{}", entry_id.to_usize())).into()
@@ -6633,11 +6784,11 @@ impl ProjectPanel {
                         ProjectPanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
                     })
                     .selectable(false)
-                    .when(
-                        canonical_path.is_some()
+                    .map(|this| {
+                        let indicators = (canonical_path.is_some()
                             || diagnostic_count.is_some()
-                            || git_indicator.is_some(),
-                        |this| {
+                            || git_indicator.is_some())
+                        .then(|| {
                             let symlink_element = canonical_path.map(|path| {
                                 div()
                                     .id("symlink_icon")
@@ -6655,49 +6806,69 @@ impl ProjectPanel {
                                             .color(filename_text_color),
                                     )
                             });
-                            this.end_slot::<AnyElement>(
-                                h_flex()
-                                    .gap_1()
-                                    .flex_none()
-                                    .pr_3()
-                                    .when_some(diagnostic_count, |this, count| {
-                                        this.when(count.error_count > 0, |this| {
-                                            this.child(
-                                                Label::new(count.capped_error_count())
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Error),
-                                            )
-                                        })
-                                        .when(
-                                            count.warning_count > 0,
-                                            |this| {
-                                                this.child(
-                                                    Label::new(count.capped_warning_count())
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Warning),
-                                                )
-                                            },
+                            h_flex()
+                                .gap_1()
+                                .flex_none()
+                                .pr_3()
+                                .when_some(diagnostic_count, |this, count| {
+                                    this.when(count.error_count > 0, |this| {
+                                        this.child(
+                                            Label::new(count.capped_error_count())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Error),
                                         )
                                     })
-                                    .when_some(git_indicator, |this, (label, color)| {
-                                        let git_indicator = if kind.is_dir() {
-                                            Indicator::dot()
-                                                .color(Color::Custom(color.color(cx).opacity(0.5)))
-                                                .into_any_element()
-                                        } else {
-                                            Label::new(label)
-                                                .size(LabelSize::Small)
-                                                .color(color)
-                                                .into_any_element()
-                                        };
+                                    .when(
+                                        count.warning_count > 0,
+                                        |this| {
+                                            this.child(
+                                                Label::new(count.capped_warning_count())
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Warning),
+                                            )
+                                        },
+                                    )
+                                })
+                                .when_some(git_indicator, |this, (label, color)| {
+                                    let git_indicator = if kind.is_dir() {
+                                        Indicator::dot()
+                                            .color(Color::Custom(color.color(cx).opacity(0.5)))
+                                            .into_any_element()
+                                    } else {
+                                        Label::new(label)
+                                            .size(LabelSize::Small)
+                                            .color(color)
+                                            .into_any_element()
+                                    };
 
-                                        this.child(git_indicator)
-                                    })
-                                    .when_some(symlink_element, |this, el| this.child(el))
-                                    .into_any_element(),
-                            )
-                        },
-                    )
+                                    this.child(git_indicator)
+                                })
+                                .when_some(symlink_element, |this, el| this.child(el))
+                                .into_any_element()
+                        });
+
+                        match root_actions {
+                            Some(root_actions) => this.end_slot(
+                                h_flex()
+                                    .relative()
+                                    .flex_none()
+                                    .child(root_actions.visible_on_hover("project-panel"))
+                                    .when_some(indicators, |this, indicators| {
+                                        this.child(
+                                            h_flex()
+                                                .absolute()
+                                                .inset_0()
+                                                .justify_end()
+                                                .group_hover("project-panel", |style| {
+                                                    style.invisible()
+                                                })
+                                                .child(indicators),
+                                        )
+                                    }),
+                            ),
+                            None => this.end_slot::<AnyElement>(indicators),
+                        }
+                    })
                     .map(|this| {
                         let decoration_color =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
@@ -7675,6 +7846,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
                 .on_action(cx.listener(Self::expand_all_entries))
+                .when(is_local, |el| el.on_action(cx.listener(Self::refresh)))
                 .on_action(cx.listener(Self::collapse_selected_entry_and_children))
                 .on_action(cx.listener(Self::expand_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
@@ -7728,6 +7900,7 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
+                        .child(self.render_navigation_bar(cx))
                         .child(
                             uniform_list("entries", item_count, {
                                 cx.processor(|this, range: Range<usize>, window, cx| {
@@ -8153,6 +8326,7 @@ impl Render for ProjectPanel {
             v_flex()
                 .id("empty-project_panel-wrapper")
                 .size_full()
+                .child(self.render_navigation_bar(cx))
                 .child(
                     ProjectEmptyState::new(
                         "Project Panel",
