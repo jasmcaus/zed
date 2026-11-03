@@ -1529,14 +1529,15 @@ fn initialize_pane(
 fn open_about_window(cx: &mut App) {
     fn about_window_icon(release_channel: ReleaseChannel) -> Arc<Image> {
         let bytes = match release_channel {
-            ReleaseChannel::Dev => include_bytes!("../resources/app-icon-dev.png").as_slice(),
             ReleaseChannel::Nightly => {
                 include_bytes!("../resources/app-icon-nightly.png").as_slice()
             }
             ReleaseChannel::Preview => {
                 include_bytes!("../resources/app-icon-preview.png").as_slice()
             }
-            ReleaseChannel::Stable => include_bytes!("../resources/app-icon.png").as_slice(),
+            ReleaseChannel::Dev | ReleaseChannel::Stable => {
+                include_bytes!("../resources/app-icon.png").as_slice()
+            }
         };
 
         Arc::new(Image::from_bytes(ImageFormat::Png, bytes.to_vec()))
