@@ -7166,7 +7166,9 @@ pub fn render_breadcrumb_text(
         text_style.font_style = font.style;
         text_style.font_weight = font.weight;
     }
-    text_style.color = Color::Muted.color(cx);
+    // Derived from the text color rather than `Color::Muted`, which some themes
+    // set to the same value as regular text.
+    text_style.color = cx.theme().colors().text.opacity(0.8);
 
     let is_dirty_without_tab_bar =
         !workspace::TabBarSettings::get_global(cx).show && active_item.is_dirty(cx);
