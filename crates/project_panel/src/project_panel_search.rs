@@ -852,6 +852,10 @@ impl ProjectPanelSearch {
             .update(cx, |editor, cx| editor.set_text(replacement, window, cx));
     }
 
+    pub(crate) fn results_scroll_handle(&self) -> gpui::ScrollHandle {
+        self.scroll_handle.0.borrow().base_handle.clone()
+    }
+
     /// Returns each matching file's name with its match previews, marking the
     /// highlighted part of each preview with «».
     pub(crate) fn results_summary(&self) -> Vec<(String, Vec<String>)> {

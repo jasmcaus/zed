@@ -13750,6 +13750,71 @@ fn entry_row_bounds(panel: &ProjectPanel, entry_id: ProjectEntryId) -> Bounds<Pi
     )
 }
 
+async fn workspace_with_many_needles(
+    cx: &mut gpui::TestAppContext,
+) -> (Entity<Workspace>, VisualTestContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "many.rs": "needle\n".repeat(200),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    (workspace, VisualTestContext::from_window(window.into(), cx))
+}
+
+fn search_for_needle(
+    panel: &Entity<ProjectPanel>,
+    cx: &mut VisualTestContext,
+) -> Entity<project_panel_search::ProjectPanelSearch> {
+    panel.update_in(cx, |panel, window, cx| panel.show_search(window, cx));
+    let search = panel.read_with(cx, |panel, _| panel.search.clone());
+    search.update_in(cx, |search, window, cx| {
+        search.set_query("needle", window, cx);
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    search
+}
+
+#[gpui::test]
+async fn test_sidebar_search_results_stay_within_panel(cx: &mut gpui::TestAppContext) {
+    let (workspace, mut cx) = workspace_with_many_needles(cx).await;
+    // Left out of the dock so that the window's own redraw can't overwrite the
+    // bounds this test's draw records in the results' scroll handle.
+    let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+        ProjectPanel::new(workspace, window, cx)
+    });
+    let search = search_for_needle(&panel, &mut cx);
+
+    let panel_height = px(400.);
+    cx.draw(
+        gpui::point(px(0.), px(0.)),
+        gpui::size(px(300.), panel_height),
+        |_, _| panel.clone().into_any_element(),
+    );
+
+    let results = search.read_with(&cx, |search, _| search.results_scroll_handle());
+    assert!(
+        results.max_offset().y > px(0.),
+        "expected the results to overflow their list"
+    );
+    assert!(
+        results.bounds().bottom() <= panel_height,
+        "results list ends at {:?}, past the bottom of the {panel_height:?} panel",
+        results.bounds().bottom(),
+    );
+}
+
 #[gpui::test]
 async fn test_sidebar_search(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
