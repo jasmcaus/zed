@@ -407,14 +407,22 @@ pub enum ScrollbarRevealPolicy {
     #[default]
     ScrollOrContentChange,
     ScrollOnly,
+    /// Stays hidden when the pointer enters the parent, and is instead revealed
+    /// by scrolling or by hovering over the track. The track overlays the
+    /// parent's content and responds to presses even while the thumb is hidden.
+    ScrollOrTrackHover,
 }
 
 impl ScrollbarRevealPolicy {
     fn should_reveal(self, geometry_changed: bool, scroll_position_changed: bool) -> bool {
         match self {
             Self::ScrollOrContentChange => geometry_changed,
-            Self::ScrollOnly => scroll_position_changed,
+            Self::ScrollOnly | Self::ScrollOrTrackHover => scroll_position_changed,
         }
+    }
+
+    fn reveals_on_track_hover(self) -> bool {
+        self == Self::ScrollOrTrackHover
     }
 }
 
@@ -738,7 +746,13 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             get_visibility: config.get_visibility,
             style: config.style.unwrap_or_default(),
             reveal_policy: config.reveal_policy,
-            show_state: VisibilityState::from_behavior(show_behavior),
+            show_state: if show_behavior == ShowBehavior::Autohide
+                && config.reveal_policy.reveals_on_track_hover()
+            {
+                VisibilityState::Hidden
+            } else {
+                VisibilityState::from_behavior(show_behavior)
+            },
             mouse_in_parent: true,
             last_prepaint_state: None,
             _auto_hide_task: None,
@@ -862,6 +876,10 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let track_hovered = self.reveal_policy.reveals_on_track_hover()
+            && self
+                .hit_for_position(position)
+                .is_some_and(|layout| layout.cursor_hitbox.is_hovered(window));
         self.set_thumb_state(
             if let Some(&ScrollbarLayout { axis, .. }) =
                 self.last_prepaint_state.as_ref().and_then(|state| {
@@ -871,6 +889,8 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
                 })
             {
                 ThumbState::Hover(axis)
+            } else if track_hovered {
+                ThumbState::TrackHover
             } else {
                 ThumbState::Inactive
             },
@@ -1000,6 +1020,7 @@ pub struct ScrollbarElement<T: ScrollableHandle> {
 enum ThumbState {
     #[default]
     Inactive,
+    TrackHover,
     Hover(ScrollbarAxis),
     Dragging(ScrollbarAxis, Pixels),
 }
@@ -1114,7 +1135,11 @@ enum ScrollbarMouseEvent {
 
 struct ScrollbarLayout {
     thumb_bounds: Bounds<Pixels>,
+    /// Where a press grabs the thumb, which can be wider than the painted thumb.
+    thumb_hit_bounds: Bounds<Pixels>,
     track_bounds: Bounds<Pixels>,
+    /// Where a press or hover engages the scrollbar.
+    hit_bounds: Bounds<Pixels>,
     cursor_hitbox: Hitbox,
     reserved_space: ReservedSpace,
     track_config: Option<(Bounds<Pixels>, TrackColors)>,
@@ -1185,17 +1210,13 @@ impl ScrollbarPrepaintState {
     fn thumb_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
         self.thumbs
             .iter()
-            .find(|info| info.thumb_bounds.contains(position))
+            .find(|info| info.thumb_hit_bounds.contains(position))
     }
 
     fn hit_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
-        self.thumbs.iter().find(|info| {
-            if info.reserved_space.needs_scroll_track() {
-                info.track_bounds.contains(position)
-            } else {
-                info.thumb_bounds.contains(position)
-            }
-        })
+        self.thumbs
+            .iter()
+            .find(|info| info.hit_bounds.contains(position))
     }
 
     fn should_show_scrollbars(
@@ -1204,7 +1225,7 @@ impl ScrollbarPrepaintState {
         reveal_policy: ScrollbarRevealPolicy,
     ) -> bool {
         let Some(previous) = previous else {
-            return true;
+            return !reveal_policy.reveals_on_track_hover();
         };
         let scroll_position_changed = self.thumbs.iter().any(|thumb| {
             self.position
@@ -1361,13 +1382,36 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 );
 
                                 let needs_scroll_track = reserved_space.needs_scroll_track();
+                                let reveals_on_track_hover =
+                                    state.reveal_policy.reveals_on_track_hover();
 
                                 ScrollbarLayout {
                                     thumb_bounds,
+                                    thumb_hit_bounds: if reveals_on_track_hover {
+                                        Bounds::new(
+                                            scroll_track_bounds.origin.apply_along(axis, |_| {
+                                                thumb_bounds.origin.along(axis)
+                                            }),
+                                            scroll_track_bounds.size.apply_along(axis, |_| {
+                                                thumb_bounds.size.along(axis)
+                                            }),
+                                        )
+                                    } else {
+                                        thumb_bounds
+                                    },
                                     track_bounds: thumb_container_bounds,
+                                    hit_bounds: if reveals_on_track_hover {
+                                        scroll_track_bounds
+                                    } else if needs_scroll_track {
+                                        thumb_container_bounds
+                                    } else {
+                                        thumb_bounds
+                                    },
                                     axis,
                                     cursor_hitbox: window.insert_hitbox(
-                                        if needs_scroll_track {
+                                        if reveals_on_track_hover {
+                                            scroll_track_bounds
+                                        } else if needs_scroll_track {
                                             if has_border && state.style == ScrollbarStyle::Editor {
                                                 scroll_track_bounds
                                             } else {
@@ -1640,14 +1684,13 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             return;
                         };
 
-                        let ScrollbarLayout {
-                            thumb_bounds, axis, ..
-                        } = scrollbar_layout;
+                        let axis = scrollbar_layout.axis;
+                        let thumb_origin = scrollbar_layout.thumb_bounds.origin.along(axis);
+                        let thumb_size = scrollbar_layout.thumb_bounds.size.along(axis);
 
-                        if thumb_bounds.contains(&event.position) {
-                            let offset =
-                                event.position.along(*axis) - thumb_bounds.origin.along(*axis);
-                            state.set_dragging(*axis, offset, cx);
+                        if scrollbar_layout.thumb_hit_bounds.contains(&event.position) {
+                            let offset = event.position.along(axis) - thumb_origin;
+                            state.set_dragging(axis, offset, cx);
                         } else {
                             let scroll_handle = state.scroll_handle();
                             let click_offset = scrollbar_layout.compute_click_offset(
@@ -1656,9 +1699,14 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 ScrollbarMouseEvent::TrackClick,
                             );
                             state.set_offset(
-                                scroll_handle.offset().apply_along(*axis, |_| click_offset),
+                                scroll_handle.offset().apply_along(axis, |_| click_offset),
                                 cx,
                             );
+                            // A track click centers the thumb on the pointer, so
+                            // this keeps following the pointer from that same spot.
+                            if state.reveal_policy.reveals_on_track_hover() {
+                                state.set_dragging(axis, thumb_size / 2., cx);
+                            }
                         };
 
                         cx.stop_propagation();
@@ -1708,7 +1756,9 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 | hover @ ParentHoverEvent::Within
                                     if event.pressed_button.is_none() =>
                                 {
-                                    if matches!(hover, ParentHoverEvent::Entered) {
+                                    if matches!(hover, ParentHoverEvent::Entered)
+                                        && !state.reveal_policy.reveals_on_track_hover()
+                                    {
                                         state.show_scrollbars(cx);
                                     }
                                     state.update_hovered_thumb(&event.position, window, cx);
@@ -1766,7 +1816,7 @@ impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, point};
+    use gpui::{TestAppContext, div, point};
 
     struct TestScrollbarSetting(ShowScrollbar);
 
@@ -1854,6 +1904,120 @@ mod tests {
     fn scroll_only_reveal_policy_ignores_content_changes() {
         assert!(!ScrollbarRevealPolicy::ScrollOnly.should_reveal(true, false));
         assert!(ScrollbarRevealPolicy::ScrollOnly.should_reveal(false, true));
+    }
+
+    #[test]
+    fn track_hover_reveal_policy_ignores_content_changes() {
+        assert!(!ScrollbarRevealPolicy::ScrollOrTrackHover.should_reveal(true, false));
+        assert!(ScrollbarRevealPolicy::ScrollOrTrackHover.should_reveal(false, true));
+    }
+
+    struct TrackHoverTestView {
+        scroll_handle: ScrollHandle,
+        scrollbar: Entity<ScrollbarState>,
+    }
+
+    impl Render for TrackHoverTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(
+                    div()
+                        .id("content")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .child(div().h(px(10_000.))),
+                )
+                .child(self.scrollbar.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn test_track_hover_policy_reveals_only_over_the_track(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let scroll_handle = ScrollHandle::new();
+        let scrollbar: Entity<ScrollbarState> = cx.new(|cx| {
+            ScrollbarState::new_from_config(
+                Scrollbars::new_with_setting(ScrollAxes::Vertical, |_| ShowScrollbar::Auto)
+                    .tracked_scroll_handle(&scroll_handle)
+                    .reveal_policy(ScrollbarRevealPolicy::ScrollOrTrackHover),
+                Corners::default(),
+                cx.entity_id(),
+                cx,
+            )
+        });
+        let (_view, cx) = cx.add_window_view({
+            let scroll_handle = scroll_handle.clone();
+            let scrollbar = scrollbar.clone();
+            |_, _| TrackHoverTestView {
+                scroll_handle,
+                scrollbar,
+            }
+        });
+        cx.run_until_parked();
+
+        let viewport = scroll_handle.bounds();
+        assert!(scroll_handle.max_offset().y > px(0.));
+        scrollbar.read_with(cx, |scrollbar, _| {
+            assert_eq!(scrollbar.show_state, VisibilityState::Hidden);
+        });
+
+        cx.simulate_mouse_move(viewport.center(), None, Default::default());
+        scrollbar.read_with(cx, |scrollbar, _| {
+            assert_eq!(scrollbar.show_state, VisibilityState::Hidden);
+            assert_eq!(scrollbar.thumb_state, ThumbState::Inactive);
+        });
+
+        // Below the thumb, which starts at the top of the track.
+        let track_position = point(viewport.right() - px(1.), viewport.center().y);
+        cx.simulate_mouse_move(track_position, None, Default::default());
+        scrollbar.read_with(cx, |scrollbar, _| {
+            assert!(scrollbar.visible());
+            assert_eq!(scrollbar.thumb_state, ThumbState::TrackHover);
+        });
+
+        // Hovering keeps the scrollbar up for as long as the pointer stays there.
+        cx.executor()
+            .advance_clock(SCROLLBAR_HIDE_DELAY_INTERVAL * 2);
+        cx.run_until_parked();
+        scrollbar.read_with(cx, |scrollbar, _| {
+            assert!(!matches!(
+                scrollbar.show_state,
+                VisibilityState::Hidden | VisibilityState::Animating { showing: false, .. }
+            ));
+        });
+
+        cx.simulate_mouse_move(viewport.center(), None, Default::default());
+        scrollbar.read_with(cx, |scrollbar, _| {
+            assert_eq!(scrollbar.thumb_state, ThumbState::Inactive);
+        });
+        cx.executor().advance_clock(SCROLLBAR_HIDE_DELAY_INTERVAL);
+        cx.run_until_parked();
+        scrollbar.read_with(cx, |scrollbar, _| {
+            assert!(matches!(
+                scrollbar.show_state,
+                VisibilityState::Hidden | VisibilityState::Animating { showing: false, .. }
+            ));
+        });
+
+        // Pressing the track while the thumb is on its way out still jumps there
+        // and then keeps following the pointer.
+        cx.simulate_mouse_down(track_position, MouseButton::Left, Default::default());
+        let offset_after_press = scroll_handle.offset().y;
+        assert!(offset_after_press < px(0.));
+        let bottom_of_track = point(track_position.x, viewport.bottom() - px(1.));
+        cx.simulate_mouse_move(bottom_of_track, MouseButton::Left, Default::default());
+        assert_eq!(scroll_handle.offset().y, -scroll_handle.max_offset().y);
+        cx.simulate_mouse_up(bottom_of_track, MouseButton::Left, Default::default());
+        scrollbar.read_with(cx, |scrollbar, _| {
+            assert!(!scrollbar.is_dragging());
+        });
     }
 
     #[test]

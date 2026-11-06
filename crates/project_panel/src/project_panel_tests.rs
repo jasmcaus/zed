@@ -13816,6 +13816,53 @@ async fn test_sidebar_search_results_stay_within_panel(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+async fn test_sidebar_search_scrollbar_can_be_dragged(cx: &mut gpui::TestAppContext) {
+    let (workspace, mut cx) = workspace_with_many_needles(cx).await;
+    let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        panel
+    });
+    cx.run_until_parked();
+    let search = search_for_needle(&panel, &mut cx);
+    cx.run_until_parked();
+
+    let results = search.read_with(&cx, |search, _| search.results_scroll_handle());
+    let viewport = results.bounds();
+    let max_offset = results.max_offset().y;
+    assert!(max_offset > px(0.), "expected the results to scroll");
+    assert_eq!(results.offset().y, px(0.));
+
+    let track_x = viewport.right() - px(7.);
+    let thumb_position = gpui::point(track_x, viewport.top() + px(10.));
+    let bottom_of_track = gpui::point(track_x, viewport.bottom() - px(1.));
+    cx.simulate_mouse_move(thumb_position, None, gpui::Modifiers::default());
+    cx.simulate_mouse_down(
+        thumb_position,
+        gpui::MouseButton::Left,
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_move(
+        bottom_of_track,
+        gpui::MouseButton::Left,
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_up(
+        bottom_of_track,
+        gpui::MouseButton::Left,
+        gpui::Modifiers::default(),
+    );
+    cx.run_until_parked();
+
+    assert_eq!(results.offset().y, -max_offset);
+    assert!(
+        workspace.read_with(&cx, |workspace, cx| workspace.active_item(cx).is_none()),
+        "pressing the scrollbar shouldn't open the result underneath it"
+    );
+}
+
+#[gpui::test]
 async fn test_sidebar_search(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 

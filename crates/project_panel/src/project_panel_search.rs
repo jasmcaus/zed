@@ -16,9 +16,11 @@ use project::{
 };
 use search::{SearchOption, SearchOptions, project_search::split_glob_patterns};
 use settings::Settings as _;
-use ui::{Tooltip, prelude::*};
+use ui::{ScrollbarRevealPolicy, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::paths::PathMatcher;
 use workspace::{PreviewTabsSettings, Workspace, notifications::DetachAndPromptErr as _};
+
+use crate::project_panel_settings::ProjectPanelScrollbarProxy;
 
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(300);
 const MAX_PREVIEW_PREFIX_LEN: usize = 24;
@@ -670,7 +672,8 @@ impl ProjectPanelSearch {
             .id(("project-panel-search-row", row_index))
             .w_full()
             .h_6()
-            .pr_2()
+            // Keeps the match count clear of the scrollbar's track.
+            .pr_4()
             .gap_1()
             .cursor_pointer()
             .hover(|style| style.bg(colors.ghost_element_hover));
@@ -924,21 +927,34 @@ impl Render for ProjectPanelSearch {
                     .child(self.render_summary(cx)),
             )
             .child(
-                uniform_list(
-                    "project-panel-search-results",
-                    self.rows.len(),
-                    cx.processor(|this, range: Range<usize>, window, cx| {
-                        range
-                            .filter_map(|row_index| {
-                                let row = *this.rows.get(row_index)?;
-                                Some(this.render_row(row_index, row, window, cx))
-                            })
-                            .collect()
-                    }),
-                )
-                .with_sizing_behavior(ListSizingBehavior::Infer)
-                .track_scroll(&self.scroll_handle)
-                .flex_1(),
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        uniform_list(
+                            "project-panel-search-results",
+                            self.rows.len(),
+                            cx.processor(|this, range: Range<usize>, window, cx| {
+                                range
+                                    .filter_map(|row_index| {
+                                        let row = *this.rows.get(row_index)?;
+                                        Some(this.render_row(row_index, row, window, cx))
+                                    })
+                                    .collect()
+                            }),
+                        )
+                        .with_sizing_behavior(ListSizingBehavior::Infer)
+                        .track_scroll(&self.scroll_handle)
+                        .flex_1(),
+                    )
+                    .custom_scrollbars(
+                        Scrollbars::for_settings::<ProjectPanelScrollbarProxy>()
+                            .tracked_scroll_handle(&self.scroll_handle)
+                            .reveal_policy(ScrollbarRevealPolicy::ScrollOrTrackHover)
+                            .notify_content(),
+                        window,
+                        cx,
+                    ),
             )
     }
 }
