@@ -7811,7 +7811,12 @@ impl Render for ProjectPanel {
                 .size_full()
                 .track_focus(&self.focus_handle(cx))
                 .child(self.render_navigation_bar(cx))
-                .child(self.search.clone());
+                .child(
+                    // The results list's min-content height is its full length,
+                    // so without `min_h_0` this slot would refuse to shrink and
+                    // the end of the list would overflow past the panel's bottom.
+                    div().flex_1().min_h_0().child(self.search.clone()),
+                );
         }
 
         let has_worktree = !self.state.visible_entries.is_empty();
